@@ -48,4 +48,13 @@ function Update () {
 	*/
 }
 
+function init(){
+	hasPieceNum = 0;
+	piece = null;
+	pieceScript = null;
+}
+
+function quantum() : boolean{
+	return hasPieceNum != hasPieceDen;
+}
 

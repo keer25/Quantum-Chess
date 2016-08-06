@@ -1,11 +1,13 @@
-﻿#pragma strict
+#pragma strict
 /*
 mode 0 : No piece selected
 mode 1 : Classic move selected
 mode 2 : Quantum move selected
 */	
 import GameSparks.Api.Messages;
+import UI;
 
+var btn : Button;
 var white : GameObject;
 var black : GameObject;
 var pawnWhite : GameObject;
@@ -15,7 +17,7 @@ private var mode : int;
 private var selInd : Array;
 private var turn : String;
 private var moveCount : int;
-// Entangles  = {ind : [{eInd : [array of samepieces]},...]}
+// Entangles  = {ind : [{eInd : [[array of samepieces], count, den]},...]}
 private var entangles : Hashtable;
 private var prevInd : int;
 private var prevE : int;
@@ -32,15 +34,24 @@ var pieceField : UI.Text;
 var chessBoard : Array;
 
 function Start () {
-	chalData = GameObject.Find("GameSparksManager").GetComponent("GameSparksManager");
 	turn = "black";
+	btn.onClick.AddListener(function(){
+		if (turn == "white"){
+			turn = "black";
+		}
+		else{
+			turn = "white";
+		}
+		chalData.color = turn;
+		Debug.Log(turn + "'s turn");
+	});
+	chalData = GameObject.Find("GameSparksManager").GetComponent("GameSparksManager");
 	Debug.Log(turn + "'s turn");
-	entangles = new Hashtable();
 	moveCount = 0;
 	mode = 0;
 	prevInd = -1;
 	prevE = -1;
-	
+	entangles = new Hashtable();
 	field.text = chalData.opponent.DisplayName;
 	ScriptMessage.Listener = function(message){
 		handleOpponentMove(message);
@@ -216,14 +227,34 @@ private function clickEvent(y, square : SquareController, i : int, j : int){
 					Debug.Log("Valid Move : "+validity.ToString());
 				}
 				if (square.hasPieceNum > 0){
-					if (kill){
+					if (move && selectedPiece.tag == "Pawn" && square.quantum()){
+						if (!calc(square.hasPieceNum, square.hasPieceDen, square)){
+							if (secqMove(selectedSquare)){
+								sendMove(i, j);
+								move(selectedSquare, square);
+							}
+						}
+					}
+					else if (kill){
 						Debug.Log("Player Chose to Capture");
 						if (square.piece.GetComponent(ColorAssign).color != turn){
 							if (mode == 2){
 								Debug.Log("You cannot kill with a quantum move");
+							}else if(moveCount == 1){
+								Debug.Log("Ony quantum move alowed now");
 							}else{
-								sendMove(i, j);
-								kill(selectedSquare, square);
+								if(square.quantum()){
+									if (calc(square.hasPieceNum, square.hasPieceDen, square)){
+										sendMove(i, j);
+										kill(selectedSquare, square);
+									}else if (secqMove(selectedSquare)){
+										sendMove(i, j);
+										move(selectedSquare, square);
+									}
+								}else{
+									sendMove(i, j);
+									kill(selectedSquare, square);
+								}
 							}
 						}
 						else{
@@ -240,8 +271,6 @@ private function clickEvent(y, square : SquareController, i : int, j : int){
 					if (secqMove(selectedSquare)){
 						sendMove(i, j);
 						move(selectedSquare, square);
-					}else{
-
 					}
 				}
 			}
@@ -253,6 +282,9 @@ private function selectPiece(y: int, square : SquareController, i : int, j : int
 	selInd = new Array([i,j]);
 	paintSquare(y, square.gameObject);
 	pieceField.text =  square.piece.tag + " " + ((100*square.hasPieceNum)/square.hasPieceDen).ToString()+ "%";
+	if (square.quantum()){
+		pieceField.text += "\n" + square.pieceScript.qState.ToString();
+	}
 	Debug.Log("Seleted "+square.piece.ToString());
 }
 
@@ -340,12 +372,16 @@ function isValid(tag, p: Vector3, target: Vector3) : boolean {
 //Returns 0 if valid to make a kill
 function isPawnValid(t : int, p: Vector3, target : Vector3) {
 	if (floatCompare(target.y, p.y + t*1.3) || floatCompare(target.y, p.y + (t/2)*1.3)){
-			if (floatCompare(target.x, p.x)){
-			if (Physics.Raycast(p, target - p, Vector3.Distance(target,p))){
-				Debug.Log("Obstacle");
-				return -1;
-			}
-			else{
+		if (floatCompare(target.x, p.x)){
+			if(t == 2){
+				if (Physics.Raycast(p, target - p, Vector3.Distance(target,p) - 1.3)){
+					Debug.Log("Obstacle");
+					return -1;
+				}
+				else{
+					return 1;
+				}
+			}else{
 				return 1;
 			}
 		}
@@ -374,6 +410,11 @@ function move(selectedSquare : SquareController, square : SquareController){
 		square.pieceScript = selectedSquare.pieceScript;
 		square.hasPieceNum = selectedSquare.hasPieceNum;
 		square.hasPieceDen = selectedSquare.hasPieceDen;
+		if (square.quantum()){
+			var temp : Array;
+			temp = (entangles[square.pieceScript.eIndex] as Hashtable)[square.pieceScript.index];
+			temp[findIndex(temp, selectedSquare.ind)] = square.ind;
+		}
 		selectedSquare.hasPieceNum = 0;
 		selectedSquare.piece = null;
 		selectedSquare.pieceScript = null;
@@ -383,13 +424,23 @@ function move(selectedSquare : SquareController, square : SquareController){
 	deselect(-1, selectedSquare);
 }
 
+function findIndex (arr : Array, ind : Array): int{
+	for (var x =0; x<arr.length; x++){
+		if(indCompare(arr[x], ind)){
+			break;
+		}
+	}
+	if (x == arr.length){
+		return -1;
+	}else{
+		return x;
+	}
+}
 //ind parameter is -1 if moveCount = 1 else
 //It is the index of the previously moved piece
 function quantMove(selectedSquare : SquareController, square : SquareController){	
 	Debug.Log("Quantum Move");
 	var script : ColorAssign = selectedSquare.pieceScript;
-	square.hasPieceNum = selectedSquare.hasPieceNum;
-	square.hasPieceDen = selectedSquare.hasPieceDen *= 2; //= selectedSquare.GetComponent(SquareController).hasPiece/2;
 	square.piece = Instantiate(selectedSquare.piece);
 	square.piece.transform.position = square.gameObject.transform.position;
 	var scriptSq : ColorAssign;
@@ -403,6 +454,15 @@ function quantMove(selectedSquare : SquareController, square : SquareController)
 		((entangles[script.eIndex] as Hashtable)[script.index] as Array).push(square.ind);
 		Debug.Log("New entry in entangles at "+script.eIndex.ToString()+":"+script.index.ToString());
 		Debug.Log((entangles[script.eIndex] as Hashtable)[script.index]);
+	}
+	square.hasPieceNum = selectedSquare.hasPieceNum;
+	square.hasPieceDen = selectedSquare.hasPieceDen *= 2;
+	var pieces : Array = (entangles[script.eIndex] as Hashtable)[script.index];
+	for (var j =0 ; j<pieces.length; j++){
+		if (!indCompare(square.ind, pieces[j]) && !indCompare(selectedSquare.ind, pieces[j])){
+			(pieces[j] as SquareController).hasPieceNum*= 2;
+			(pieces[j] as SquareController).hasPieceDen*=2;
+		}
 	}
 	if (moveCount == 1){
 		Debug.Log("Storing 1st quantum move");
@@ -433,6 +493,8 @@ function quantMove(selectedSquare : SquareController, square : SquareController)
 						tempPiece.qState.push(null);
 					}	
 				}else{
+					getSquare(item[i]).hasPieceNum *= 2;
+					getSquare(item[i]).hasPieceDen *= 2;	
 					tempPiece = getSquare(item[i]).pieceScript;
 					for (x = 0; x<N ; x++){
 						tempPiece.qState.push(null);
@@ -461,6 +523,8 @@ function quantMove(selectedSquare : SquareController, square : SquareController)
 						tempPiece.qState.push(null);
 					}
 				}else{
+					getSquare(item[i]).hasPieceNum *= 2;
+					getSquare(item[i]).hasPieceDen *= 2;
 					tempo = [];
 					tempPiece = getSquare(item[i]).pieceScript;
 					for (x = 0; x<prevN ; x++){
@@ -489,19 +553,51 @@ function kill(selectedSquare : SquareController, square : SquareController){
 	square.piece = selectedSquare.piece;
 	square.pieceScript = selectedSquare.pieceScript;
 	square.piece.transform.position = square.gameObject.transform.position;
-	selectedSquare.hasPieceNum = 0;
-	selectedSquare.piece = null;	
-	selectedSquare.pieceScript = null;
+	if (square.quantum()){
+		var temp : Array;
+		temp = (entangles[square.pieceScript.eIndex] as Hashtable)[square.pieceScript.index];
+		temp[findIndex(temp, selectedSquare.ind)] = square.ind;
+	}
+	selectedSquare.init();
 	deselect(-1, selectedSquare);
 }
+
 function slice(arr : Array){
 	return arr.slice(0,arr.length);
 }
 
-function selectRandom(p : int) : boolean{
-
+function calc(num : int, den : int, sq : SquareController) : boolean{
+	var i : int;
+	var temp : Array = (entangles[sq.pieceScript.eIndex] as Hashtable)[sq.pieceScript.index];
+	if (Random.Range(0, den) < num ){
+		Debug.Log("The piece was determined to be there");
+		for (i = 0 ; i<temp.length;i++){
+			if (!indCompare(temp[i], sq.ind)){
+				Destroy(getSquare(temp[i]).piece);
+				getSquare(temp[i]).init();
+			}
+		}
+		removeIndex(sq.pieceScript.index, sq.pieceScript.eIndex);
+		if (entangles.Contains(sq.pieceScript.eIndex)){
+			finState(sq.pieceScript.qState, entangles[sq.pieceScript.eIndex]);
+		}
+		sq.hasPieceNum = sq.hasPieceDen = 1;
+		sq.pieceScript.init();
+		return true;
+	}else{
+		Debug.Log("The piece was determined to be not there");
+		elemState(sq.pieceScript.qState, entangles[sq.pieceScript.eIndex], sq.pieceScript.index);
+		elemPiece(temp, findIndex(temp, sq.ind));	
+		return false;
+	}
 }
 
+private function removeIndex(index : int, eIndex : int){
+	(entangles[eIndex] as Hashtable).Remove(index);
+	if ((entangles[eIndex] as Hashtable).Count == 0){
+		entangles.Remove(eIndex);
+	}
+}
 function sendMove(i,j){
 	new LogEventRequest()
 		.SetEventKey("sendMove")
@@ -539,6 +635,104 @@ function oppMove(finPosSquare : SquareController, iniPosSquare : SquareControlle
 		kill(iniPosSquare, finPosSquare);
 	}else{
 		move(iniPosSquare, finPosSquare);
+	}
+}
+
+private function elemState(qState : Array, hash : Hashtable, index : int){
+	var temp : Array; var tempState : Array;var change : int;
+	for (key in hash.Keys){
+		if (key != index){
+			temp = hash[key];
+			for (var i = 0; i<temp.length; i++){
+				tempState = getSquare(temp[i]).pieceScript.qState;
+				change = 0;
+				for (var j =0 ; j<qState.length ; j++){
+					if (qState[j] != null && tempState[j] != qState[j]){
+						if(tempState[j] == null){
+							change ++;
+							tempState[j] = !qState[j];
+						}else{
+							break;
+						}
+					}
+				}
+				if (j == qState.length){
+				//elemPiece(getSquare(temp[i]), i);
+					change = getSquare(temp[i]).hasPieceNum;
+					changeProb(temp, j, change);
+					elemPiece(temp, j);
+				}else{
+					change = (2^change - 1)*(2^countNull(tempState));
+					changeProb(temp, j, change);
+				}
+			}
+		}
+	}
+}
+
+private function countNull(state : Array) : int{
+	var c : int = 0;
+	for (var x =0 ;x<state.length; x++){
+		if (state[x] == null){
+			c++;
+		}
+	}
+	return c;
+}
+
+private function changeProb(pieces : Array, ai : int, change : int){
+	for (var x =0 ; x<pieces.length; x++){
+		if (x == ai){
+			getSquare(pieces[x]).hasPieceNum -= change;
+		}
+		getSquare(pieces[x]).hasPieceDen -= change; 
+	}
+}
+
+private function elemPiece(temp : Array, i : int){
+    Destroy(getSquare(temp[i]).piece);
+	getSquare(temp[i]).init();
+	temp.RemoveAt(i);
+	if (temp.length == 1){
+		var tempPiece : SquareController;
+		tempPiece = getSquare(temp[0]);
+		removeIndex(tempPiece.pieceScript.index, tempPiece.pieceScript.eIndex);
+		tempPiece.hasPieceNum = tempPiece.hasPieceDen = 1;
+		tempPiece.pieceScript.init();
+	}
+}
+
+private function finState(qState : Array, hash : Hashtable){
+	var temp : Array; var tempState : Array;var change : int;
+	var tempHash : Hashtable = hash.Clone();var tempC : Array ;
+	var tempInd : int;
+	for (key in tempHash.Keys){		
+			temp = hash[key]; tempC = temp.slice(0,temp.length);
+			for (var i = 0; i<tempC.length ; i++){
+				tempState = getSquare(tempC[i]).pieceScript.qState;
+				change = 0;
+				for (var j =0 ; j<qState.length ; j++){
+					if (qState[j] != null && tempState[j] != qState[j]){
+						if(tempState[j] == null){
+							change ++;
+							tempState[j] = qState[j];
+						}else{
+							break;
+						}
+					}
+				}
+				tempInd = findIndex(temp, getSquare(tempC[i]).ind);
+				if (j != qState.length){
+				//elemPiece(getSquare(temp[i]), i);
+					change = getSquare(tempC[i]).hasPieceNum;
+					changeProb(temp, tempInd, change);
+					elemPiece(temp, tempInd);
+				}else{
+					change = (2^change - 1)*(2^countNull(tempState));
+					changeProb(temp, tempInd, change);
+				}
+			}
+		
 	}
 }
 
