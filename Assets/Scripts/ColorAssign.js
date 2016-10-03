@@ -5,7 +5,6 @@ var eIndex : int;
 var index : int;
 var qState : Array;
 
-
 function Start () {
 }
 
