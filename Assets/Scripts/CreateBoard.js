@@ -48,7 +48,8 @@ function Start () {
 	});
 	btn1.onClick.AddListener(function(){
 		var selSquare : SquareController = getSquare(selInd);
-		calc(selSquare.hasPieceNum, selSquare.hasPieceDen, selSquare);
+		sendCalc(selSquare.ind[0], selSquare.ind[1],
+		 calc(selSquare.hasPieceNum, selSquare.hasPieceDen, selSquare, -1));
 	});
 	chalData = GameObject.Find("GameSparksManager").GetComponent("GameSparksManager");
 	Debug.Log(turn + "'s turn");
@@ -232,12 +233,15 @@ private function clickEvent(y, square : SquareController, i : int, j : int){
 					Debug.Log("Valid Move : "+validity.ToString());
 				}
 				if (square.hasPieceNum > 0){
-					if (move && selectedPiece.tag == "Pawn" && square.quantum()){
-						if (!calc(square.hasPieceNum, square.hasPieceDen, square)){
-							if (secqMove(selectedSquare)){
-								sendMove(i, j);
-								move(selectedSquare, square);
-							}
+					if (move && selectedPiece.tag == "Pawn" && square.quantum() && secqMove(selectedSquare)){
+						deselect(-1, selectedSquare);
+						var selBool = calc(selectedSquare.hasPieceNum, selectedSquare.hasPieceDen, selectedSquare, -1);
+						sendCalc(selectedSquare.ind[0], selectedSquare.ind[1], selBool);
+						var sqBool = calc(square.hasPieceNum, square.hasPieceDen, square, -1);
+						sendCalc(square.ind[0], square.ind[1], sqBool);
+						if ( selBool && !sqBool){
+							sendMove(i, j);
+							move(selectedSquare, square);
 						}
 					}
 					else if (kill){
@@ -245,14 +249,16 @@ private function clickEvent(y, square : SquareController, i : int, j : int){
 						if (square.piece.GetComponent(ColorAssign).color != turn){
 							if (mode == 2){
 								Debug.Log("You cannot kill with a quantum move");
-							}else if(moveCount == 1){
-								Debug.Log("Ony quantum move alowed now");
-							}else{
+							}else if(secqMove(selectedSquare)){
 								if(square.quantum()){
-									if (calc(square.hasPieceNum, square.hasPieceDen, square)){
+									var tempBool = calc(selectedSquare.hasPieceNum, selectedSquare.hasPieceDen, selectedSquare, -1);
+									sendCalc(selectedSquare.ind[0], selectedSquare.ind[1], tempBool);
+									var squareBool = calc(square.hasPieceNum, square.hasPieceDen, square, -1);
+									sendCalc(square.ind[0], square.ind[1], squareBool);
+									if ( squareBool && tempBool){
 										sendMove(i, j);
 										kill(selectedSquare, square);
-									}else if (secqMove(selectedSquare)){
+									}else if(tempBool){
 										sendMove(i, j);
 										move(selectedSquare, square);
 									}
@@ -576,10 +582,17 @@ function slice(arr : Array){
 	return arr.slice(0,arr.length);
 }
 
-function calc(num : int, den : int, sq : SquareController) : boolean{
+function calc(num : int, den : int, sq : SquareController, res) : boolean{
+	deselect(-1, sq);
 	var i : int;
+	Debug.Log(sq);
+	Debug.Log(sq.pieceScript);
+	Debug.Log(sq.pieceScript.eIndex);
+	Debug.Log(sq.pieceScript.index);
+	Debug.Log(entangles[sq.pieceScript.eIndex]);
 	var temp : Array = (entangles[sq.pieceScript.eIndex] as Hashtable)[sq.pieceScript.index];
-	if (Random.Range(0, den) < num ){
+	if (res == -1 ) res = Random.Range(0, den) < num;
+	if ( res){
 		Debug.Log("The piece was determined to be there");
 		for (i = 0 ; i<temp.length;i++){
 			if (!indCompare(temp[i], sq.ind)){
@@ -608,6 +621,8 @@ private function removeIndex(index : int, eIndex : int){
 		entangles.Remove(eIndex);
 	}
 }
+
+//Function to send the move across the network to the opponent
 function sendMove(i,j){
 	new LogEventRequest()
 		.SetEventKey("sendMove")
@@ -624,15 +639,35 @@ function sendMove(i,j){
 	}	
 }
 
+//Function to send the measurement on a piece to the opponent
+function sendCalc(i,j,res){
+	new LogEventRequest()
+		.SetEventKey("sendCalc")
+		.SetEventAttribute("pos", getPos(i,j))
+		.SetEventAttribute("result", res.ToString())
+		.SetEventAttribute("oppId",chalData.opponent.Id)
+		.Send(function(response) {
+
+		});
+	} 
+
 function handleOpponentMove(message : ScriptMessage){
-	var data : GSData = message.Data;
-	var temp = data.GetString("finPos").Split(","[0]);
-	var finPosSquare = getSquare(parseInt(temp[0]),parseInt(temp[1]));
-	temp = data.GetString("iniPos").Split(","[0]);
-	var i = parseInt(temp[0]); var j = parseInt(temp[1]);
-	var iniPosSquare = getSquare(i,j);
-	selectPiece(data.GetInt("mode").Value, iniPosSquare, i, j);
-	oppMove(finPosSquare, iniPosSquare);
+	var data : GSData = message.Data;  var i : int; var j : int;
+	if (data.GetString("event") == "sendMove"){
+		var temp = data.GetString("finPos").Split(","[0]);
+		var finPosSquare = getSquare(parseInt(temp[0]),parseInt(temp[1]));
+		temp = data.GetString("iniPos").Split(","[0]);
+		i = parseInt(temp[0]); j = parseInt(temp[1]);
+		var iniPosSquare = getSquare(i,j);
+		selectPiece(data.GetInt("mode").Value, iniPosSquare, i, j);
+		oppMove(finPosSquare, iniPosSquare);
+	}else{
+		var temp1 = data.GetString("pos").Split(","[0]);
+		i = parseInt(temp1[0]); j = parseInt(temp1[1]);Debug.Log(i); Debug.Log(j);
+		var tempSq  = getSquare(i, j);
+		Debug.Log(tempSq); Debug.Log(data.GetString("result") == "true");
+		calc(tempSq.hasPieceNum, tempSq.hasPieceDen, tempSq, data.GetString("result") == "true");
+	}
 }
 
 function oppMove(finPosSquare : SquareController, iniPosSquare : SquareController){
